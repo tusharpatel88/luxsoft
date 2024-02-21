@@ -3,6 +3,9 @@ package com.dws.challenge.repository;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +20,7 @@ import lombok.Getter;
 public class AccountsRepositoryInMemory implements AccountsRepository {
 
 	private final Map<String, Account> accounts = new ConcurrentHashMap<>();
+	private final ExecutorService executor = Executors.newFixedThreadPool(2);
 
 	@Override
 	public void createAccount(Account account) throws DuplicateAccountIdException {
@@ -35,47 +39,54 @@ public class AccountsRepositoryInMemory implements AccountsRepository {
 	public void clearAccounts() {
 		accounts.clear();
 	}
-	
+
 	// Define a lock object to synchronize access to shared resources
 	private final Object lock = new Object();
 
 	@Override
-	 @Transactional(rollbackFor = Exception.class)
+	@Transactional(rollbackFor = Exception.class)
 	public void transferMoney(String accountFromId, String accountToId, BigDecimal amount,
 			NotificationService notificationService) throws Exception {
 		if (amount.compareTo(new BigDecimal(0)) <= 0) {
 			throw new IllegalArgumentException("Amount to transfer must be a positive number");
 		}
+
 		try {
-		    synchronized (lock) {
-		        Account accountFrom = getAccount(accountFromId);
-		        if (accountFrom == null)
-		            throw new IllegalArgumentException("Account not found: " + accountFromId);
+			Account accountFrom = getAccount(accountFromId);
 
-		        Account accountTo = getAccount(accountToId);
-		        if (accountTo == null)
-		            throw new IllegalArgumentException("Account not found: " + accountToId);
+			if (accountFrom == null)
+				throw new IllegalArgumentException("Account not found: " + accountFromId);
 
-		        // Perform transfer within a transaction
-		        accountFrom.setBalance(accountFrom.getBalance().subtract(amount));
-		        accountTo.setBalance(accountTo.getBalance().add(amount));
+			Account accountTo = getAccount(accountToId);
+			if (accountTo == null)
+				throw new IllegalArgumentException("Account not found: " + accountToId);
 
-		        // Update the accounts map within the synchronized block
-		        accounts.put(accountFromId, accountFrom);
-		        accounts.put(accountToId, accountTo);
-		    	// Notify account holders
-				notificationService.notifyAboutTransfer(accountTo,
-						"Transfer to account " + accountTo.getAccountId() + ": $" + amount);
-				notificationService.notifyAboutTransfer(accountFrom,
-						"Transfer from account " + accountFrom.getAccountId() + ": $" + amount);
-		    }
+			
+			Future<?> transferFromFuture = executor.submit(() -> transferFrom(accountFrom, amount));
+			Future<?> transferToFuture = executor.submit(() -> transferTo(accountTo, amount));
+
+			// Wait for both tasks to complete
+			transferFromFuture.get();
+			transferToFuture.get();
 		} catch (Exception e) {
-		    // Handle exceptions as needed
-		    throw new Exception("Error during transfer: " + e.getMessage());
+			// Handle exceptions as needed
+			throw new RuntimeException("Error during transfer: " + e.getMessage(), e);
 		}
 
-	
+	}
 
+	private void transferTo(Account accountTo, BigDecimal amount) {
+		synchronized (lock) {
+			accountTo.setBalance(accountTo.getBalance().add(amount));
+		}
+
+	}
+
+	private void transferFrom(Account accountFrom, BigDecimal amount) {
+		synchronized (lock) {
+
+			accountFrom.setBalance(accountFrom.getBalance().subtract(amount));
+		}
 	}
 
 }
