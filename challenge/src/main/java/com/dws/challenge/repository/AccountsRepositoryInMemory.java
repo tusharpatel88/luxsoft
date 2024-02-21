@@ -35,6 +35,9 @@ public class AccountsRepositoryInMemory implements AccountsRepository {
 	public void clearAccounts() {
 		accounts.clear();
 	}
+	
+	// Define a lock object to synchronize access to shared resources
+	private final Object lock = new Object();
 
 	@Override
 	 @Transactional(rollbackFor = Exception.class)
@@ -43,35 +46,35 @@ public class AccountsRepositoryInMemory implements AccountsRepository {
 		if (amount.compareTo(new BigDecimal(0)) <= 0) {
 			throw new IllegalArgumentException("Amount to transfer must be a positive number");
 		}
-		Account accountFrom = getAccount(accountFromId);
-		if (accountFrom == null)
-			new IllegalArgumentException("Account not found: " + accountFromId);
-
-		Account accountTo = getAccount(accountToId);
-
-		if (accountTo == null)
-			new IllegalArgumentException("Account not found: " + accountFromId);
-
 		try {
-			// Perform transfer within a transaction
-			accountFrom.setBalance(accountFrom.getBalance().subtract(amount));
+		    synchronized (lock) {
+		        Account accountFrom = getAccount(accountFromId);
+		        if (accountFrom == null)
+		            throw new IllegalArgumentException("Account not found: " + accountFromId);
+
+		        Account accountTo = getAccount(accountToId);
+		        if (accountTo == null)
+		            throw new IllegalArgumentException("Account not found: " + accountToId);
+
+		        // Perform transfer within a transaction
+		        accountFrom.setBalance(accountFrom.getBalance().subtract(amount));
+		        accountTo.setBalance(accountTo.getBalance().add(amount));
+
+		        // Update the accounts map within the synchronized block
+		        accounts.put(accountFromId, accountFrom);
+		        accounts.put(accountToId, accountTo);
+		    	// Notify account holders
+				notificationService.notifyAboutTransfer(accountTo,
+						"Transfer to account " + accountTo.getAccountId() + ": $" + amount);
+				notificationService.notifyAboutTransfer(accountFrom,
+						"Transfer from account " + accountFrom.getAccountId() + ": $" + amount);
+		    }
 		} catch (Exception e) {
-			throw new Exception("Error while subtracting balance" + e.getMessage());
-		}
-		try {
-			accountTo.setBalance(accountTo.getBalance().add(amount));
-		} catch (Exception e) {
-			throw new Exception("Error while adding balance" + e.getMessage());
+		    // Handle exceptions as needed
+		    throw new Exception("Error during transfer: " + e.getMessage());
 		}
 
-		accounts.put(accountFromId, accountFrom);
-		accounts.put(accountToId, accountTo);
-
-		// Notify account holders
-		notificationService.notifyAboutTransfer(accountTo,
-				"Transfer to account " + accountTo.getAccountId() + ": $" + amount);
-		notificationService.notifyAboutTransfer(accountFrom,
-				"Transfer from account " + accountFrom.getAccountId() + ": $" + amount);
+	
 
 	}
 
