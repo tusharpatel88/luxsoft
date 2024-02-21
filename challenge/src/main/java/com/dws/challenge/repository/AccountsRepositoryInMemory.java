@@ -68,6 +68,12 @@ public class AccountsRepositoryInMemory implements AccountsRepository {
 			// Wait for both tasks to complete
 			transferFromFuture.get();
 			transferToFuture.get();
+
+			// Notify account holders
+			notificationService.notifyAboutTransfer(accountTo,
+						"Transfer to account " + accountTo.getAccountId() + ": $" + amount);
+			notificationService.notifyAboutTransfer(accountFrom,
+						"Transfer from account " + accountFrom.getAccountId() + ": $" + amount);
 		} catch (Exception e) {
 			// Handle exceptions as needed
 			throw new RuntimeException("Error during transfer: " + e.getMessage(), e);
